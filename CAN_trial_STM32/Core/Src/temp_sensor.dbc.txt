@@ -1,0 +1,10 @@
+VERSION ""
+
+NS_ :
+
+BS_:
+
+BU_: STM32
+
+BO_ 1926 TEMP_MSG: 8 STM32
+ SG_ Temperature : 0|16@0- (0.01,0) [-100|150] "degC" Vector__XXX

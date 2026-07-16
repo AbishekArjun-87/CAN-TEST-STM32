@@ -45,6 +45,8 @@ extern UART_HandleTypeDef hcom_uart[];
 COM_InitTypeDef BspCOMInit;
 FDCAN_HandleTypeDef hfdcan1;
 
+I2C_HandleTypeDef hi2c1;
+
 /* USER CODE BEGIN PV */
 
 /* USER CODE END PV */
@@ -53,13 +55,17 @@ FDCAN_HandleTypeDef hfdcan1;
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_FDCAN1_Init(void);
+static void MX_I2C1_Init(void);
 /* USER CODE BEGIN PFP */
 static void CAN_TRANSMIT_MESSAGE(void);
+HAL_StatusTypeDef MCP9808_ReadTemp_x100(int16_t *temp_x100);
+
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-
+#define MCP9808_ADDR        (0x18 << 1)
+#define MCP9808_REG_TEMP 0x05 //Defining the Register address inside the sensor
 /* USER CODE END 0 */
 
 /**
@@ -92,6 +98,7 @@ int main(void)
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
   MX_FDCAN1_Init();
+  MX_I2C1_Init();
   /* USER CODE BEGIN 2 */
   HAL_FDCAN_Start(&hfdcan1);
   HAL_FDCAN_ActivateNotification(&hfdcan1,FDCAN_IT_TX_COMPLETE,FDCAN_TX_BUFFER0 | FDCAN_TX_BUFFER1 | FDCAN_TX_BUFFER2  );
@@ -219,28 +226,53 @@ static void MX_FDCAN1_Init(void)
 
 }
 
-static void CAN_TRANSMIT_MESSAGE()
+/**
+  * @brief I2C1 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_I2C1_Init(void)
 {
-	FDCAN_TxHeaderTypeDef TxHeader;
-	TxHeader.Identifier= 0x786;
-	TxHeader.IdType= FDCAN_STANDARD_ID;
-	TxHeader.TxFrameType= FDCAN_DATA_FRAME;
-	  TxHeader.DataLength = FDCAN_DLC_BYTES_8;
-	   TxHeader.ErrorStateIndicator = FDCAN_ESI_ACTIVE;
-	   TxHeader.BitRateSwitch = FDCAN_BRS_OFF;
-	   TxHeader.FDFormat = FDCAN_CLASSIC_CAN;
-	   TxHeader.TxEventFifoControl = FDCAN_NO_TX_EVENTS;
-	   TxHeader.MessageMarker = 0;
 
-	   uint8_t TxData[8] = {0x11,0x22,0x33,0x44,0x55,0x66,0x77,0x88};
+  /* USER CODE BEGIN I2C1_Init 0 */
 
-	   if (HAL_FDCAN_AddMessageToTxFifoQ(&hfdcan1, &TxHeader, TxData) != HAL_OK) //Message is added to FIFOQueue
-	   	{																		//If condition to see if the Queue is full or not.
-	   	    BSP_LED_On(LED_GREEN);   // stays on if a send ever fails
-	   	}
+  /* USER CODE END I2C1_Init 0 */
+
+  /* USER CODE BEGIN I2C1_Init 1 */
+
+  /* USER CODE END I2C1_Init 1 */
+  hi2c1.Instance = I2C1;
+  hi2c1.Init.Timing = 0x00503D58;
+  hi2c1.Init.OwnAddress1 = 0;
+  hi2c1.Init.AddressingMode = I2C_ADDRESSINGMODE_7BIT;
+  hi2c1.Init.DualAddressMode = I2C_DUALADDRESS_DISABLE;
+  hi2c1.Init.OwnAddress2 = 0;
+  hi2c1.Init.OwnAddress2Masks = I2C_OA2_NOMASK;
+  hi2c1.Init.GeneralCallMode = I2C_GENERALCALL_DISABLE;
+  hi2c1.Init.NoStretchMode = I2C_NOSTRETCH_DISABLE;
+  if (HAL_I2C_Init(&hi2c1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+
+  /** Configure Analogue filter
+  */
+  if (HAL_I2CEx_ConfigAnalogFilter(&hi2c1, I2C_ANALOGFILTER_ENABLE) != HAL_OK)
+  {
+    Error_Handler();
+  }
+
+  /** Configure Digital filter
+  */
+  if (HAL_I2CEx_ConfigDigitalFilter(&hi2c1, 0) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN I2C1_Init 2 */
+
+  /* USER CODE END I2C1_Init 2 */
 
 }
-
 
 /**
   * @brief GPIO Initialization Function
@@ -265,9 +297,96 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
+
+
+
+HAL_StatusTypeDef MCP9808_ReadTemp_x100(int16_t *temp_x100)
+{
+    uint8_t data[2];
+
+    HAL_StatusTypeDef status = HAL_I2C_Mem_Read(
+        &hi2c1,
+        MCP9808_ADDR,
+        MCP9808_REG_TEMP,
+        I2C_MEMADD_SIZE_8BIT,
+        data,
+        2,
+        100
+    );
+
+    if (status != HAL_OK)
+    {
+        return status;
+    }
+
+    /*
+     * MCP9808 temperature register:
+     * data[0] bits:
+     * bit 4 = sign bit
+     * bits 3:0 = upper temperature bits
+     * data[1] = lower temperature bits
+     *
+     * Raw temperature unit = 1/16 degC = 0.0625 degC
+     */
+    uint16_t raw = ((uint16_t)(data[0] & 0x1F) << 8) | data[1];
+
+    // Sign extend 13-bit value
+    if (raw & 0x1000)
+    {
+        raw |= 0xE000;
+    }
+
+    int16_t signed_raw = (int16_t)raw;
+
+    // Convert from 1/16 degC to degC x100
+    // temp_x100 = temperature * 100
+    *temp_x100 = (signed_raw * 25) / 4;
+
+    return HAL_OK;
+}
+
+
+
+static void CAN_TRANSMIT_MESSAGE()
+{
+	FDCAN_TxHeaderTypeDef TxHeader;
+	TxHeader.Identifier= 0x786;
+	TxHeader.IdType= FDCAN_STANDARD_ID;
+	TxHeader.TxFrameType= FDCAN_DATA_FRAME;
+	  TxHeader.DataLength = FDCAN_DLC_BYTES_8;
+	   TxHeader.ErrorStateIndicator = FDCAN_ESI_ACTIVE;
+	   TxHeader.BitRateSwitch = FDCAN_BRS_OFF;
+	   TxHeader.FDFormat = FDCAN_CLASSIC_CAN;
+	   TxHeader.TxEventFifoControl = FDCAN_NO_TX_EVENTS;
+	   TxHeader.MessageMarker = 0;
+
+	   //uint8_t TxData[8] = {0x11,0x22,0x33,0x44,0x55,0x66,0x77,0x88};
+
+	   int16_t temp_x100;
+	   uint8_t TxData[8]={0};
+
+
+
+	      if (MCP9808_ReadTemp_x100(&temp_x100) == HAL_OK)
+	         {
+
+
+	        	     TxData[0] = (temp_x100>>8) & 0xFF; 	//Upper part of the CAN frame.
+	        	     TxData[1] = (temp_x100) & 0xFF;  		//Lower part of the CAN frame.
+	         }
+
+	   if (HAL_FDCAN_AddMessageToTxFifoQ(&hfdcan1, &TxHeader, TxData) != HAL_OK) //Message is added to FIFOQueue
+	   	{																		//If condition to see if the Queue is full or not.
+	   	    BSP_LED_On(LED_GREEN);   // stays on if a send ever fails
+	   	}
+
+}
+
+
+
 void HAL_FDCAN_TxBufferCompleteCallback(FDCAN_HandleTypeDef *hfdcan,uint32_t BufferIndexes)
 {
-	char msg[]="CAN message ACK \n";
+	char msg[]="CAN message ACK \r \n";
 	HAL_UART_Transmit(&hcom_uart[COM1],(uint8_t*)msg,sizeof(msg)-1,100); //Doing serial print
 	BSP_LED_Toggle(LED_GREEN);
 }
