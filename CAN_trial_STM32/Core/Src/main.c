@@ -18,6 +18,7 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
+#include "string.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
@@ -58,13 +59,14 @@ static void MX_FDCAN1_Init(void);
 static void MX_I2C1_Init(void);
 /* USER CODE BEGIN PFP */
 static void CAN_TRANSMIT_MESSAGE(void);
-HAL_StatusTypeDef MCP9808_ReadTemp_x100(int16_t *temp_x100);
+HAL_StatusTypeDef MCP9808_ReadTemp_x100(uint16_t addr, int16_t *temp_x100);
 
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
 #define MCP9808_ADDR        (0x18 << 1)
+#define MCP9808_ADDR_2        (0x19 << 1) // Adding the second sensor
 #define MCP9808_REG_TEMP 0x05 //Defining the Register address inside the sensor
 /* USER CODE END 0 */
 
@@ -122,6 +124,48 @@ int main(void)
   {
     Error_Handler();
   }
+
+
+  if (HAL_I2C_IsDeviceReady(&hi2c1, MCP9808_ADDR, 3, 100) == HAL_OK)
+  {
+	  char msg1[]=" S 1 available \r \n";
+	  	    	 	    	  	HAL_UART_Transmit(&hcom_uart[COM1],(uint8_t*)msg1,sizeof(msg1)-1,100); //Doing serial print
+  }
+  else
+  {
+	  char msg2[]=" S 1 unavailable\r \n";
+	  	    	 	    	  	HAL_UART_Transmit(&hcom_uart[COM1],(uint8_t*)msg2,sizeof(msg2)-1,100); //Doing serial print
+  }
+
+
+
+  if (HAL_I2C_IsDeviceReady(&hi2c1, MCP9808_ADDR_2, 3, 100) == HAL_OK)
+  {
+	  char msg1[]=" S 2 available \r \n";
+	  	  	    	 	    	  	HAL_UART_Transmit(&hcom_uart[COM1],(uint8_t*)msg1,sizeof(msg1)-1,100); //Doing serial print
+  }
+  else
+  {
+	  char msg2[]=" S 2 unavailable \r \n";
+	  	  	    	 	    	  	HAL_UART_Transmit(&hcom_uart[COM1],(uint8_t*)msg2,sizeof(msg2)-1,100); //Doing serial print
+  }
+
+
+  char msg2[]=" Scanning the bus \r \n";
+ 	  	  	    	 	    	  	HAL_UART_Transmit(&hcom_uart[COM1],(uint8_t*)msg2,sizeof(msg2)-1,100); //Doing serial print
+
+  for (uint8_t addr = 1; addr < 128; addr++)
+  {
+      if (HAL_I2C_IsDeviceReady(&hi2c1, (addr << 1), 3, 100) == HAL_OK)
+      {
+          char msg[40];
+          snprintf(msg, sizeof(msg), "Found device at 0x%02X\r\n", addr);
+          HAL_UART_Transmit(&hcom_uart[COM1], (uint8_t*)msg, strlen(msg), 100);
+      }
+
+  }
+  char scanDone[] = "Scan complete, entering main loop\r\n";
+  HAL_UART_Transmit(&hcom_uart[COM1], (uint8_t*)scanDone, strlen(scanDone)-1, 100);
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
@@ -300,13 +344,13 @@ static void MX_GPIO_Init(void)
 
 
 
-HAL_StatusTypeDef MCP9808_ReadTemp_x100(int16_t *temp_x100)
+HAL_StatusTypeDef MCP9808_ReadTemp_x100(uint16_t addr , int16_t *temp_x100)
 {
     uint8_t data[2];
 
     HAL_StatusTypeDef status = HAL_I2C_Mem_Read(
         &hi2c1,
-        MCP9808_ADDR,
+        addr,
         MCP9808_REG_TEMP,
         I2C_MEMADD_SIZE_8BIT,
         data,
@@ -362,18 +406,46 @@ static void CAN_TRANSMIT_MESSAGE()
 
 	   //uint8_t TxData[8] = {0x11,0x22,0x33,0x44,0x55,0x66,0x77,0x88};
 
-	   int16_t temp_x100;
+	   int16_t temp_1,temp_2;
 	   uint8_t TxData[8]={0};
 
 
+	   HAL_StatusTypeDef res1 = MCP9808_ReadTemp_x100(MCP9808_ADDR, &temp_1);
+	    HAL_StatusTypeDef res2 = MCP9808_ReadTemp_x100(MCP9808_ADDR_2, &temp_2);
 
-	      if (MCP9808_ReadTemp_x100(&temp_x100) == HAL_OK)
+	      if (res1 == HAL_OK) //Sesnsor 1 and Sensor 2
 	         {
+	    	  char msg2[]=" Recording temperature 1\r \n";
+	    	 	    	  	HAL_UART_Transmit(&hcom_uart[COM1],(uint8_t*)msg2,sizeof(msg2)-1,100); //Doing serial print
 
+	    	 	    	   TxData[0] = (temp_1>>8) & 0xFF; 	//Sensor 1 upper byte
+	    	 	    	   TxData[1] = (temp_1) & 0xFF;  		// Sensor 1 lower byte
 
-	        	     TxData[0] = (temp_x100>>8) & 0xFF; 	//Upper part of the CAN frame.
-	        	     TxData[1] = (temp_x100) & 0xFF;  		//Lower part of the CAN frame.
 	         }
+	      else
+	      {
+	          char err1[40];
+	          snprintf(err1, sizeof(err1), "Sensor 1 FAILED, status=%d\r\n", res1);
+	          HAL_UART_Transmit(&hcom_uart[COM1], (uint8_t*)err1, strlen(err1), 100);
+	      }
+
+
+	    	  if(res2 == HAL_OK)
+		{
+	    	  	  char msg[]=" Recording temperature 2\r \n";
+	    	  	HAL_UART_Transmit(&hcom_uart[COM1],(uint8_t*)msg,sizeof(msg)-1,100); //Doing serial print
+
+	    	  			TxData[2] = (temp_2>>8) & 0xFF; 	//Upper part of the CAN frame.
+	    	  			TxData[3] = (temp_2) & 0xFF;  		//Lower part of the CAN frame.
+	         }
+	    	    else
+	    	    {
+	    	        char err2[40];
+	    	        snprintf(err2, sizeof(err2), "Sensor 2 FAILED, status=%d\r\n", res2);
+	    	        HAL_UART_Transmit(&hcom_uart[COM1], (uint8_t*)err2, strlen(err2), 100);
+	    	    }
+
+
 
 	   if (HAL_FDCAN_AddMessageToTxFifoQ(&hfdcan1, &TxHeader, TxData) != HAL_OK) //Message is added to FIFOQueue
 	   	{																		//If condition to see if the Queue is full or not.
@@ -381,7 +453,6 @@ static void CAN_TRANSMIT_MESSAGE()
 	   	}
 
 }
-
 
 
 void HAL_FDCAN_TxBufferCompleteCallback(FDCAN_HandleTypeDef *hfdcan,uint32_t BufferIndexes)
